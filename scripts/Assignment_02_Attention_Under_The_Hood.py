@@ -366,14 +366,42 @@ def apply_logit_lens(model, hidden_states, tokens, seq_idx, filename="logit_lens
     print(f"Logit lens saved to {OUTPUT_DIR / filename}")
 
 
+def make_probe_input(prefix):
+    """Build a copy-task input from a hand-picked prefix (same layout as the generator)."""
+    x = torch.tensor(prefix, dtype=torch.long).unsqueeze(0)
+    sep = torch.zeros(1, 1, dtype=torch.long)
+    return torch.cat([x, sep, x], dim=1)[:, :-1].to(DEVICE)
+
+
+# Hand-picked prefixes: repeats test position vs token identity, ascending is a
+# repeat-free baseline, constant removes all token-identity signal.
+HAND_PICKED_PREFIXES = {
+    "repeats": [5, 3, 9, 3, 7, 5, 2, 8, 2, 6],
+    "ascending": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "constant": [7, 7, 7, 7, 7, 7, 7, 7, 7, 7],
+}
+
+
 def run_probes(model):
     model.eval()
-    inputs, _ = generate_copy_task_batch(1, SEQ_LEN, VOCAB_SIZE)
-    with torch.no_grad():
-        logits, attention_maps, hidden_states = model(inputs, return_intermediates=True)
+    seeded, _ = generate_copy_task_batch(1, SEQ_LEN, VOCAB_SIZE)
+    probe_inputs = [("", seeded)] + [
+        (f"_{name}", make_probe_input(prefix))
+        for name, prefix in HAND_PICKED_PREFIXES.items()
+    ]
 
-    plot_attention_maps(attention_maps, inputs, 0)
-    apply_logit_lens(model, hidden_states, inputs, 0)
+    for name, inputs in probe_inputs:
+        with torch.no_grad():
+            logits, attention_maps, hidden_states = model(
+                inputs, return_intermediates=True
+            )
+
+        plot_attention_maps(
+            attention_maps, inputs, 0, filename=f"attention_maps{name}.png"
+        )
+        apply_logit_lens(
+            model, hidden_states, inputs, 0, filename=f"logit_lens{name}.png"
+        )
 
 
 # =============================================================================
